@@ -86,7 +86,8 @@ def create_tpt(kpi_name,formula,folder,table):
     app_logger.info("Creating {kpi_name}={formula}"\
                     .format(kpi_name=kpi_name,formula=formula))
     vars,divs=get_vars_divs(formula)
-    schema=metadata['Library Info']['SCHEMA']
+    schema=metadata['Library Info']['VENDOR']\
+            +"_"+metadata['Library Info']['DOMAIN']
     #Build the string to call the function
     call_str='{schema}_{kpi_name}('.format(schema=schema,kpi_name=kpi_name)
     call_vars=[]
@@ -94,12 +95,12 @@ def create_tpt(kpi_name,formula,folder,table):
         if var+table in temp_dict:
             rd_name=temp_dict[var+table]
         else:
-            index=metadata['Keys_Counters_KPIs']\
-               .index[(metadata['Keys_Counters_KPIs']['Counter/KPI DB Name']\
+            index=metadata['Counters_KPI']\
+               .index[(metadata['Counters_KPI']['Counter/KPI DB Name']\
                       == var)
-                      & (metadata['Keys_Counters_KPIs']['Table Name']\
+                      & (metadata['Counters_KPI']['Table Name']\
                       == table)]
-            rd_name='{'+metadata['Keys_Counters_KPIs']\
+            rd_name='{'+metadata['Counters_KPI']\
                .loc[index,'Raw Data Counter Name/OID'].item()+'}'
         call_vars.append('{rd_name}'.format(rd_name=rd_name))
     call_str+=','.join(call_vars)+')'
@@ -164,13 +165,15 @@ def create_functions():
     global temp_dict
     app_logger=logger.get_logger("create_functions")
     app_logger.info("Creating functions")
+    schema=metadata['Library Info']['VENDOR']\
+            +"_"+metadata['Library Info']['DOMAIN']
     tpt_file_name='{schema}_TrolLocalFunctions.tpt'\
-        .format(schema=metadata['Library Info']['SCHEMA'])
+        .format(schema=schema)
     #Make file emty
     open(tpt_file_name, 'w').close()
     temp_cnt=1
     #Loop over all counters
-    df=metadata['Keys_Counters_KPIs']
+    df=metadata['Counters_KPI']
     for idx,kpi in df.iterrows():
         raw_formula=kpi['KPI Formula']
         if kpi['Counter/KPI DB Name'] in custom_counters:
@@ -194,17 +197,18 @@ def create_functions():
                                  .format(kpi_name=kpi['Counter/KPI DB Name'],
                                          formula=formula))
                 quit()
+
             call_str=create_tpt(kpi['Counter/KPI DB Name'],
                 formula,
-                metadata['Library Info']['SCHEMA'],
+                schema,
                 kpi['Table Name'])
         #Modify formula in metadata
-        index=metadata['Keys_Counters_KPIs']\
-                .index[(metadata['Keys_Counters_KPIs']['Counter/KPI DB Name']\
+        index=metadata['Counters_KPI']\
+                .index[(metadata['Counters_KPI']['Counter/KPI DB Name']\
                        ==kpi['Counter/KPI DB Name'])\
-                      & (metadata['Keys_Counters_KPIs']['Table Name']\
+                      & (metadata['Counters_KPI']['Table Name']\
                        ==kpi['Table Name'])]
-        metadata['Keys_Counters_KPIs'].loc[index,'KPI Formula']=call_str
+        metadata['Counters_KPI'].loc[index,'KPI Formula']=call_str
 
 def parse_front_page(xl):
     """
@@ -234,11 +238,18 @@ def parse_library_info(xl):
     app_logger=logger.get_logger("parse_library_info")
     app_logger.info("Parsing Library Info")
     df=xl.parse('Library Info')
-    df=df.iloc[:,[1,2]].dropna(how='all')
+    #df=df.iloc[:,[1,2]].dropna(how='all')
+    df=df.iloc[:,[1,2]]
     for index,row in df.iterrows():
-        if row[0] == "Table Retention:":
-            break
-        metadata['Library Info'][row[0]]=row[1]
+        try:
+            if index[1] == "Table Retention:":
+                break
+            metadata['Library Info'][index[1]]=index[2]
+        except IndexError:
+            continue
+    metadata['Library Info']['SCHEMA']=metadata['Library Info']['VENDOR']\
+            +"_"+metadata['Library Info']['DOMAIN']
+
 
 
 def parse_table(xl,sheet_name):
@@ -269,7 +280,7 @@ def load_hld(hld_file):
     parse_library_info(xl)
     parse_table(xl,"Entities")
     parse_table(xl,"Tables")
-    parse_table(xl,"Keys_Counters_KPIs")
+    parse_table(xl,"Counters_KPI")
 
 
 
@@ -282,8 +293,7 @@ def write_oit():
     app_logger=logger.get_logger("write_oit")
     app_logger.info("Creating OIT File")
 
-    schema=metadata['Library Info']['SCHEMA']
-    wb = load_workbook('template/EASY_PM_TEMPLATE_HELIX9.xlsx')
+    wb = load_workbook('template/EASY_PM_TEMPLATE_HELIX10.xlsx')
 
     #Populate Front Page
     for sheet,fields in oit_mapping.items():
@@ -294,24 +304,11 @@ def write_oit():
 
     #Populate Entities related sheets
     ws_ent = wb['Entities']
-    ws_cfg = wb['CFG Tables']
-    ws_cfg_fields = wb['CFG Fields']
+    ws_cfg_fields = wb['Configuration Fields']
     for index,entity in metadata['Entities'].iterrows():
         #Populate Entities
-        configuration_view=''
-        if entity['Entity Type'] == 'Managed':
-            configuration_view=entity['CFG Table or conf View']
-        record=[entity['Entity Name'],
-                entity['Element Alias'],
-                entity['Parent Entity'],
-                entity['Presentation'],
-                configuration_view,
-                entity['Universe']]
-        ws_ent.append(record)
-        #If entity is Managed we dont need to define conf views
-        if entity['Entity Type'] == 'Managed':
-            continue
-        #Populate CFG Tables
+        schema=entity['CFG Table or conf View'].split('.')[0]
+        configuration_view=entity['CFG Table or conf View'].split('.')[1]
         #Get table list for autopuplate
         df=metadata['Tables']
         df=df.loc[df['Entity'] == entity['Entity Name']].head(3)
@@ -319,49 +316,89 @@ def write_oit():
         for index,table in df.iterrows():
             tables_arr.append(table['Table Name'])
         tables=','.join(tables_arr)
-        configuration_view=entity['CFG Table or conf View'].split('.')[1]
-        record=[configuration_view,entity['Entity Name'],tables]
-        ws_cfg.append(record)
+
+        record=[entity['Entity Name'],
+                entity['Entity Type'],
+                entity['Display Name'],
+                entity['Element Alias'],
+                entity['Parent Entity'],
+                '', #Domain
+                schema,
+                entity['Presentation'],
+                configuration_view,
+                entity['Universe'],
+                entity['BC Object Type '],
+                'Y',
+                'N',
+                tables,
+                'N',
+                5,
+               ]
+
+        ws_ent.append(record)
         #Populate CFG Fields
         key_list=entity['Keys'].split(',')
         for idx,key in enumerate(key_list):
             record=[configuration_view,
-                    key,'VARCHAR2','YES',100,idx+1]
+                    key,
+                    'VARCHAR2',
+                    'Y',
+                    100,
+                    idx+1]
             ws_cfg_fields.append(record)
 
     #Populate Counter Sets
     ws_cs = wb['Counter Sets']
-    ws_sum = wb['Summary Defn']
     for index,table in metadata['Tables'].dropna(how='all').iterrows():
         #Fill Counter Sets
-        if table['Base Granularity'] == '5M':
-            granularity=5
-        elif table['Base Granularity'] == '15M':
-            granularity=15
-        elif table['Base Granularity'] == '30M':
-            granularity=30
-        elif table['Base Granularity'] == 'HR':
-            granularity=60
-        elif table['Base Granularity'] == 'DY':
-            granularity=1440
+        summaries=table['Time Summary'].split(',')
+        _5M=''
+        _15M=''
+        _30M=''
+        HR=''
+        DY=''
+        WK=''
+        MO=''
+        YR=''
+        if '5M' in summaries:
+            _5M='1M'
+        if '15M' in summaries:
+            _15M='5M'
+        if '30M' in summaries:
+            _30M='15M'
+        if 'HR' in summaries:
+            HR='15M'
+        if 'DY' in summaries:
+            DY='HR'
+        if 'WK' in summaries:
+            WK='DY'
+        if 'MO' in summaries:
+            MO='DY'
+        if 'YR' in summaries:
+            YR='MO'
         record=[table['Table Name'],
+                table['Counter Group Display Name'],
                 table['Alias Table Name '],
                 table['Counter Group in RD'],
                 table['Entity'],
-                'YES',
-                granularity,
-                table['Universe']
+                'Y',
+                '',
+                table['Universe'],
+                table['Base Granularity'],
+                _5M,
+                _15M,
+                _30M,
+                HR,
+                DY,
+                WK,
+                MO,
+                YR,
                ]
         ws_cs.append(record)
-        #Fill Summary Defn
-        summaries=table['Time Summary'].split(',')
-        for summary in summaries:
-            record=[table['Table Name'],summary]
-            ws_sum.append(record)
 
     #Populate Loaded Counters
     ws = wb['Loaded Counters']
-    df=metadata['Keys_Counters_KPIs'].dropna(how='all')
+    df=metadata['Counters_KPI'].dropna(how='all')
     aggr_list=['AVG','SUM','MAX','MIN']
     temp_ct=1
     order={}
@@ -369,34 +406,33 @@ def write_oit():
         size=''
         if counter['TYPE'] in ['GPI','PI','OI']:
             size=100
-        if counter['Table Name'] not in order:
-            order[counter['Table Name']]=1
-        else:
-            order[counter['Table Name']]+=1
-        if counter['Time Aggregation'] not in aggr_list:
-            aggr_formula='NULL'
-        else:
-            aggr_formula=counter['Time Aggregation']
         if counter['Hierarchy Summary'] not in aggr_list:
             ent_aggr_formula='NULL'
         else:
             ent_aggr_formula=counter['Hierarchy Summary']
         record=[counter['Table Name'],
                 counter['Counter/KPI DB Name'],
-                counter['Vendor Counter Name'],
                 counter['Counter/KPI Display Name'],
+                counter['Vendor Counter Name'],
+                '',
                 counter['TYPE'],
                 counter['KPI Formula'],
                 size,
-                order[counter['Table Name']],
-                'YES',
-                aggr_formula,
-                aggr_formula,
-                ent_aggr_formula,
                 counter['Counter Description'],
-                counter['Default Counter'],
-                counter['Visible'],
-                'YES',
+                '',
+                'Y',
+                'Y',
+                '',
+                counter['15M'],
+                counter['30M'],
+                counter['HR'],
+                counter['DY'],
+                counter['WK'],
+                counter['MO'],
+                counter['YR'],
+                ent_aggr_formula,
+                ent_aggr_formula,
+                ent_aggr_formula,
         ]
         #Counter has custom formula and is needed a temp counter
         if counter['Counter/KPI DB Name'] in custom_counters and\
@@ -405,22 +441,24 @@ def write_oit():
             temp_record=copy.deepcopy(record)
             temp_record[1]='temp{temp_ct}'.format(temp_ct=temp_ct)
             #Fix the formula to use the temp counter
-            record[5]='temp{temp_ct}'.format(temp_ct=temp_ct)
             temp_ct+=1
             temp_record[2]=''
             temp_record[3]=''
-            temp_record[4]='NULL'
-            temp_record[5]=counter['KPI Formula']
-            temp_record[7]=order[counter['Table Name']]
+            temp_record[5]='NULL'
+            temp_record[6]=counter['KPI Formula']
             #Increase the order of the counter
-            record[7]+=1
-            order[counter['Table Name']]+=1
-            temp_record[9]='NULL'
-            temp_record[10]='NULL'
-            temp_record[11]='NULL'
-            temp_record[12]=''
-            temp_record[14]='N'
-            temp_record[15]='NO'
+            temp_record[10]='N'
+            temp_record[11]='N'
+            temp_record[13]='NULL'
+            temp_record[14]='NULL'
+            temp_record[15]='NULL'
+            temp_record[16]='NULL'
+            temp_record[17]='NULL'
+            temp_record[18]='NULL'
+            temp_record[19]='NULL'
+            temp_record[20]='NULL'
+            temp_record[21]='NULL'
+            temp_record[22]='NULL'
             ws.append(temp_record)
         ws.append(record)
     wb.save("{schema}_EZPM.xlsx".format(schema=schema))
@@ -431,7 +469,7 @@ def main():
     app_logger=logger.get_logger("main")
     app_logger.info("Starting {script}".format(script=sys.argv[0]))
     #Validate the line arguments
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
         app_logger.error("Usage {script} <HLD File> [custom counter file]"
                          .format(script=sys.argv[0]))
         app_logger.error("Example {script} 'HLD_USC_AFF_vMCC_V.1.0.2.xls'\

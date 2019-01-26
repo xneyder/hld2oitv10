@@ -1,0 +1,6 @@
+{
+    "DATETIME": {
+        "call_str": "GET_DATETIME(delivery.Source_Name)",
+        "generate_temp": "True"
+    }
+}
