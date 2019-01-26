@@ -461,6 +461,8 @@ def write_oit():
             temp_record[22]='NULL'
             ws.append(temp_record)
         ws.append(record)
+    schema=metadata['Library Info']['VENDOR']\
+            +"_"+metadata['Library Info']['DOMAIN']
     wb.save("{schema}_EZPM.xlsx".format(schema=schema))
     app_logger.info("{schema}_EZPM.xlsx file created".format(schema=schema))
 
