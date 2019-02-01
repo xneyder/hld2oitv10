@@ -188,20 +188,23 @@ def create_functions():
         elif isinstance(raw_formula, float) and np.isnan(raw_formula):
             continue
         else:
-            formula=kpi['KPI Formula'].replace(' ','').replace('\n','')
-            #Validate that the formula is valid
-            try:
-                ast.parse(formula)
-            except SyntaxError:
-                app_logger.error('Wrong formula {kpi_name}={formula}'\
+            if kpi['KPI Type'] != 'Mediation':
+                call_str=''
+            else:
+                formula=kpi['KPI Formula'].replace(' ','').replace('\n','')
+                #Validate that the formula is valid
+                try:
+                    ast.parse(formula)
+                except SyntaxError:
+                    app_logger.error('Wrong formula {kpi_name}={formula}'\
                                  .format(kpi_name=kpi['Counter/KPI DB Name'],
                                          formula=formula))
-                quit()
+                    quit()
 
-            call_str=create_tpt(kpi['Counter/KPI DB Name'],
-                formula,
-                schema,
-                kpi['Table Name'])
+                call_str=create_tpt(kpi['Counter/KPI DB Name'],
+                    formula,
+                    schema,
+                    kpi['Table Name'])
         #Modify formula in metadata
         index=metadata['Counters_KPI']\
                 .index[(metadata['Counters_KPI']['Counter/KPI DB Name']\
@@ -441,6 +444,7 @@ def write_oit():
             temp_record=copy.deepcopy(record)
             temp_record[1]='temp{temp_ct}'.format(temp_ct=temp_ct)
             #Fix the formula to use the temp counter
+            record[6]='temp{temp_ct}'.format(temp_ct=temp_ct)
             temp_ct+=1
             temp_record[2]=''
             temp_record[3]=''
